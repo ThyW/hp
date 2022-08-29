@@ -88,3 +88,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 # Examples
 Most of the functions have some simple code examples. There's also an `examples` directory which currently has a working calculator CLI app.
+
+# Contributing & Fixing
+If you feel like there's something missing from `hp` feel free to open an issue or submit a pull request. All contributions and discussions are very welcome!

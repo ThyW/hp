@@ -593,7 +593,7 @@ impl Parser {
                         true => " optional ",
                         false => " ",
                     };
-                    write!(temp, " [{}{optional}values]", t.num_values).unwrap();
+                    write!(temp, " [{}{optional}value/s]", t.num_values).unwrap();
                 }
 
                 temp.len()
@@ -666,7 +666,7 @@ impl Parser {
                     true => " optional ",
                     false => " ",
                 };
-                write!(matches, " [{}{optional}values]", template.num_values).unwrap();
+                write!(matches, " [{}{optional}value/s]", template.num_values).unwrap();
             }
 
             while matches.len() != longest_value_len + (max_level * 4) - lvl.len() {
