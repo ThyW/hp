@@ -1,27 +1,56 @@
-//! `hp` is a high performance command line argument parsing library. It's implementation is based
-//! on **HashMaps**, so parsing should be done in `O(1)` time complexity.
+//! # About
+//! `hp` or `HashParse` is a fast, simple and completely dependency free command line argument parsing library.
+//! Parsing is done in `O(n)` where `n` is the number of supplied arguments and the implementation
+//! is based on **HashMaps**, all lookups should be in `O(1)` time complexity.
+//!
+//! The most prominent features are:
+//! - automatic help message generation.
+//! - colorful and verbose error reporting.
+//! - hierarchical commands and subcommands.
+//! - easy to read and understand documentation.
+//!
+//! # Rationale
+//! For the last few months all of my projects in Rust were command line tools. I'm still a student
+//! with a ton of time on my hands, so my approach generally was, and still is for the most part, to
+//! use as little dependencies as possible and try to implement most of the stuff I need myself so
+//! I can gain a better understanding of the component in question while also keeping the project's size
+//! and complexity at a minimum. When writing these command line tools, I realized that I needed a simple and
+//! efficient way to parse command line arguments. In every project I worked on I mostly used a variation of the
+//! same complex parser which was always a hassle to write and then scale and add more arguments to, as the
+//! project grew. I wanted something simple, small and fast with little to no dependencies, something
+//! that would provided everything that a simple CLI app might need. I knew of other libraries such as `clap` or
+//! `structopt` **(both of which you should probably use instead of this)**, but I wanted to write something simple which would provide some of
+//! the same functionality, such as automatic `--help` message generation and a good way to report errors and most of all,
+//! a way to quickly add new commands and subcommands. So over the span of a few days, I wrote and documented most of
+//! `hp` the high performance, no dependency command line parsing library. There are still some
+//! things I want to change and improve, but it should be in a good and working condition now.
 //!
 //! ```
-//! extern crate hp;;
+//! extern crate hp;
 //! use hp::{Parser, Template};
+//! use std::process::exit;
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create a new parser with an automatically generated help command.
-//!     let mut parser = Parser::new().with_help();
+//!     // Create a new parser and set the necessary fields for the `--help` command.
+//!     let mut parser = Parser::new()
+//!         .with_description("An example program.")
+//!         .with_author("Me")
+//!         .with_program_name("myprog");
 //!
 //!     // Add a top level `command template` that will look for `--say` in the command line arguments.
 //!     // The command takes 1 value that is not optional, it is required.
-//!     // It also has a help string.
+//!     // The third function argument is the help string which will be printed by the `--help`
+//!     // command.
 //!     parser.add("--say", 1, "Print the command line argument value supplied.");
 //!
-//!     // For a finer control a user might want to use the `Template` structure for a better
-//!     // control over the added option.
+//!     // For finer control, a user might want to use the `Template` structure for a better
+//!     // control over the added Template.
 //!     parser.add_template(Template::new()
 //!                         .matches("--new")
 //!                         .matches("-n")
-//!                         .num_values(2)
+//!                         .number_of_values(2)
 //!                         .optional_values(true)
-//!                         .with_help("Do some amazing thing here please!");
+//!                         .with_help("Do some amazing thing here please!"));
 //!
 //!     // Each added `Template` returns an ID.
 //!     // This ID can than be used to create subcommands for that given command.
@@ -29,37 +58,51 @@
 //!
 //!     parser.add_subcommand(id, "--add", 2, "Perform addition on two numbers.");
 //!
-//!     // call functions instantly on parsing.
-//!     paerser.add_subcommand_template(id, Template::new()
-//!         .matches("--sub")
-//!         .number_of_values(2)
-//!         .on_parse(|values| {
-//!             let (a, b): (i32, i32) = (values[0].parse(), values[1].parse());
-//!             println!("{}", a - b);
-//!         }));
 //!
 //!     // $ myprog --add
-//!     // ERROR: Because '--add' is a subcommand of '-c' and '-c' is not present in the command
-//!     // line arguments, therefore '--add' is invalid.
+//!     // ERROR: Out of context argument, because '--add' is a subcommand of
+//!     // '-c' and '-c' is not present in the command.
 //!     //
 //!     // $ myprog -c --add 2 2
 //!     // 4
 //!
-//!     let presult = parser.parse()?;
+//!     // Call closures instantly, when an argument is parsed.
+//!     //
+//!     // Normally when using the `has()` and `get()` interface on the `ParsedAruguments` struct,
+//!     // upon parsing multiple arguments matching the same `Template` only the last instance of
+//!     // the argument is stored in the parsed result.
+//!     //
+//!     // The closure passed to `on_parse()` is called during parsing on every instance of the
+//!     // argument matching the same template. This means that the code meant for that template
+//!     // can be run on every value of every occurrence of the parsed template.
+//!     parser.add_subcommand_template(id, Template::new()
+//!         .matches("--sub")
+//!         .number_of_values(2)
+//!         .on_parse(|values| {
+//!             let (a, b): (i32, i32) = (values[0].parse().unwrap(), values[1].parse().unwrap());
+//!             println!("{}", a - b);
+//!         }));
 //!
-//!     if let Some(err) = presult.err() {
+//!     let presult = parser.parse(None);
+//!
+//!     if let Some(err) = presult.as_ref().err() {
 //!         println!("{err}");
-//!         exit(1)
+//!         exit(1);
 //!     }
 //!
-//!     let presult = presult.unwrap()
+//!     let presult = presult.unwrap();
 //!
 //!     if presult.has("--say") {
-//!         println!("Saying: {}", presult.get("--say")?);
+//!         println!("Saying: {}", presult.get("--say").unwrap().values()[0]);
 //!     }
+//!
+//!     Ok(())
 //! }
 //! ```
-//! TODO: MORE DOCS.
+//!
+//! # Examples
+//! Most of the functions have some simple code examples. There's also an `examples` directory
+//! which currently shows the two main ways in which `hp` could be used.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -68,7 +111,7 @@ use std::fmt::Write;
 use std::process::exit;
 use std::rc::Rc;
 
-use errors::HpError;
+pub use errors::HpError;
 
 pub mod errors;
 
@@ -76,6 +119,7 @@ type Action = Rc<RefCell<dyn FnMut(Vec<String>)>>;
 pub type TemplateId = usize;
 
 #[derive(Clone, Debug)]
+/// A parsed and verified .
 pub struct ParsedArgument {
     id: TemplateId,
     values: Vec<String>,
@@ -103,14 +147,20 @@ impl ParsedArgument {
 }
 
 #[derive(Clone, Debug)]
+/// This is the output of the parsing.
+///
+/// `ParsedAruguments` contains a `HashMap` of arugment names and `ParsedArgument` structures. It
+/// provides an interface for the user to quickly and simply verify the presence of a
+/// `ParsedArgument` and additionally retrieve its values.
 pub struct ParsedArguments {
     hm: HashMap<String, ParsedArgument>,
+    ids: HashMap<usize, ParsedArgument>,
 }
 
 impl ParsedArguments {
     /// Try to get a **top-level** parsed argument, given its name.
     ///
-    /// ```no_run
+    /// ```ignore
     /// let mut parser = Parser::new();
     /// parser.add("--some-arg", 0, "Some help.");
     /// let result = parser.parse()?;
@@ -124,22 +174,22 @@ impl ParsedArguments {
 
     /// Try to get a parsed argument, given its ID.
     ///
-    /// ```no_run
+    /// ```ignore
     /// let mut parser = Parser::new();
     /// let id = parser.add("--some-other-arg", 0, "Some help.");
     /// let result = parser.parse()?;
     ///
-    /// result.get_with_id(id).is_some().then(|| println!("--some-other-arg in arguments!))
+    /// result.get_with_id(id).is_some().then(|| println!("--some-other-arg in arguments!"))
     /// ```
     pub fn get_with_id(&self, id: TemplateId) -> Option<&ParsedArgument> {
-        self.hm.values().find(|v| v.id == id)
+        self.ids.get(&id)
     }
 
     /// Assert, whether a **top-level** argument that mathces `key` has been parsed.
     ///
     /// This function is an alias for `parsed_args.get("some-key").is_some()`.
     ///
-    /// ```no_run
+    /// ```ignore
     /// let mut parser = Parser::new();
     /// parser.add("--hello", 0, "Some help.");
     /// let result = parser.parse()?;
@@ -153,8 +203,7 @@ impl ParsedArguments {
     /// Assert, whether argument whith `id` has been parsed.
     ///
     /// This function is an alias for `parsed_args.get_with_id(id).is_some()`.
-    ///
-    /// ```no_run
+    /// ```ignore
     /// let mut parser = Parser::new();
     /// let world = parser.add("--world", 0, "Some help.");
     /// let result = parser.parse()?;
@@ -168,7 +217,7 @@ impl ParsedArguments {
     /// Try to get a parsed subargument of an argument, given the arguemnt ID and the subargument
     /// name.
     ///
-    /// ```no_run
+    /// ```ignore
     /// let mut parser = Parser::new();
     /// let world = parser.add("--world", 0, "World command.");
     /// parser.add_subcommand(world, "--new", 1, "Add a new world.")
@@ -187,11 +236,11 @@ impl ParsedArguments {
         self.hm.get(&key)
     }
 
-    /// Asssert, whether a subargument of an argument is present in subarguments.
+    /// Asssert, whether a subargument of an argument is present in the `ParsedArguments`.
     ///
     /// Alias for `parsed_args.get_with_context(context, "something").is_some()`
     ///
-    /// ```no_run
+    /// ```ignore
     /// let mut parser = Parser::new();
     /// let world = parser.add("--world", 0, "World command.");
     /// parser.add_subcommand(world, "--list", 0, "Add a new world.")
@@ -207,6 +256,8 @@ impl ParsedArguments {
 }
 
 #[derive(Default, Clone)]
+/// `Template` contains all the necessary information for matching and parsing a command line
+/// argument.
 pub struct Template {
     matches: Vec<String>,
     num_values: usize,
@@ -235,13 +286,11 @@ impl Template {
 
     /// Add a value which identifies this template when parsing the command line arguments.
     ///
-    /// ```no_run
+    /// ```ignore
     /// parser.add_template(Template::new().matches("--hi"));
     ///
     /// let ret = parser.parse()?;
     /// assert!(ret.has("--hi"))
-    ///
-    /// // $ myprog --hi # works!
     /// ```
     pub fn matches<S: AsRef<str>>(mut self, name: S) -> Self {
         let name = name.as_ref().to_string();
@@ -254,9 +303,9 @@ impl Template {
 
     /// Set the number of values this template takes.
     ///
-    /// If 0, the arugment takes no values. It can, however, have subarguments.
+    /// If 0, the argument takes no values, but it can have subarguments.
     ///
-    /// ```no_run
+    /// ```ignore
     /// parser.add_template(Template::new().matches("--say").number_of_values(1));
     ///
     /// let ret = parser.parse()?;
@@ -266,9 +315,10 @@ impl Template {
     ///
     /// // $ myprog --say hello
     /// // hello
+    /// //
     /// // $ myprog --say hello world
-    /// // WARN: extra argument 'world'
     /// // hello
+    /// //
     /// // $ myprog --say
     /// // ERROR: missing argument for '--say'.
     /// ```
@@ -279,7 +329,7 @@ impl Template {
 
     /// Ignores missing values when parsing command line arguments.
     ///
-    /// ```no_run
+    /// ```ignore
     /// parser.add_template(Template::new()
     ///                         .matches("--say")
     ///                         .number_of_values(1)
@@ -294,10 +344,7 @@ impl Template {
     ///
     /// // $ myprog --say hello
     /// // hello
-    /// // $ myprog --say hello world
-    /// // WARN: extra argument 'world'
-    /// // hello
-    /// // $ myprog --say # nothing happens
+    /// // $ myprog --say # nothing happens, would cause a missing argument error
     /// ```
     pub fn optional_values(mut self, ov: bool) -> Self {
         self.optional_vals = ov;
@@ -306,7 +353,7 @@ impl Template {
 
     /// Set a help string for this template.
     ///
-    /// ```no_run
+    /// ```ignore
     /// parser.with_description("My awesome program!")
     /// parser.add_template(Template::new()
     ///                         .matches("--say")
@@ -323,9 +370,9 @@ impl Template {
     /// // $ myprog --help
     /// // myprog: My awesome program!
     /// // usage:
-    /// //     $ myprog --[arguments]
+    /// //     $ myprog -[-arguments] [value/s]
     /// // arguments:
-    /// //     --say [1 optional value]        Print a given argument.
+    /// //     --say [1 optional value\s]        Print a given argument.
     /// //     --help                          Print this help message.
     /// ```
     pub fn with_help<S: AsRef<str>>(mut self, help_string: S) -> Self {
@@ -333,14 +380,14 @@ impl Template {
         self
     }
 
-    /// Set an aciton that will be executed immediately when a command is parsed.
+    /// Set an action that will be executed immediately when a command is parsed.
     ///
-    /// This action is a fucntion with the following signaure: `fn(Vec<String>) -> ()`.
+    /// This action is a function with the following signature: `fn(Vec<String>) -> ()`.
     ///
-    /// ```no_run
+    /// ```ignore
     /// let mut parser = Parser::new();
     ///
-    /// paerser.add_subcommand_template(id, Template::new()
+    /// parser.add_subcommand_template(id, Template::new()
     ///    .matches("--add")
     ///    .number_of_values(2)
     ///    .on_parse(|values| {
@@ -366,11 +413,11 @@ impl Template {
 #[derive(Default, Clone)]
 /// Command line argument parser.
 ///
-/// ```no_run
+/// ```ignore
 /// let parser = Parser::new()
 ///                 .exit_on_help(false)
 ///                 .with_description("My amazing program!")
-///                 .with_usage("$ myprog --[arguemnts]")
+///                 .with_usage("$ myprog [commmand] --[subcommand/s] [value/s]")
 ///                 .with_author("[REDACTED]");
 /// ```
 pub struct Parser {
@@ -411,7 +458,7 @@ impl Parser {
         }
     }
 
-    /// Specifies, whether the program should exit after priting the help message when the
+    /// Specifies, whether the program should exit after printing the help message when the
     /// '--help' or '-h' command line arguments are specified.
     pub fn exit_on_help(mut self, v: bool) -> Self {
         self.exit_on_help = v;
@@ -448,7 +495,7 @@ impl Parser {
     }
 
     /// Set a completely custom help string, which will be used when printing the `--help`
-    /// command's string.
+    /// string.
     pub fn set_help<S: AsRef<str>>(mut self, v: S) -> Self {
         self.help = Some(v.as_ref().to_string());
         self
@@ -475,7 +522,7 @@ impl Parser {
 
     /// Add a new `Template` to the parser. Return the ID of the `Template`.
     ///
-    /// This method creates the `Template` for you, but it takes away some of the options.
+    /// This method is an abstraction, it creates the `Template` for you, but it takes away some of the options.
     pub fn add<S: AsRef<str>>(
         &mut self,
         matches: S,
@@ -535,26 +582,6 @@ impl Parser {
     fn create_help(&self) -> String {
         let mut result_string = String::new();
 
-        if !self.program_name.is_empty() {
-            write!(result_string, "{}", self.program_name).unwrap_or(());
-        }
-        if !self.description.is_empty() {
-            write!(result_string, ": {}\n", self.description).unwrap_or(());
-        }
-        if !self.author.is_empty() {
-            writeln!(result_string, "Author: {}", self.author).unwrap_or(());
-        }
-        if !self.usage.is_empty() {
-            writeln!(result_string, "Usage:\n    {}", self.usage).unwrap_or(());
-        } else {
-            writeln!(
-                result_string,
-                "Usage:\n    $ {} -[-option]",
-                self.program_name
-            )
-            .unwrap_or(());
-        }
-
         let longest_value_len = self
             .stored
             .values()
@@ -564,7 +591,7 @@ impl Parser {
                 if t.num_values > 0 {
                     let optional = match t.optional_vals {
                         true => " optional ",
-                        false => " "
+                        false => " ",
                     };
                     write!(temp, " [{}{optional}values]", t.num_values).unwrap();
                 }
@@ -572,6 +599,27 @@ impl Parser {
                 temp.len()
             })
             .max();
+
+        if !self.program_name.is_empty() {
+            write!(result_string, "{}", self.program_name).unwrap_or(());
+        }
+        if !self.description.is_empty() {
+            writeln!(result_string, ": {}", self.description).unwrap_or(());
+        }
+        if !self.author.is_empty() {
+            writeln!(result_string, "Author: {}", self.author).unwrap_or(());
+        }
+        if !self.usage.is_empty() {
+            writeln!(result_string, "Usage:\n    {}", self.usage).unwrap_or(());
+        } else {
+            writeln!(
+                result_string,
+                "Usage:\n    $ {} -[-command] [value/s...]",
+                self.program_name
+            )
+            .unwrap_or(());
+        }
+
         let longest_value_len = match longest_value_len {
             Some(l) => l + 4,
             None => 4,
@@ -616,7 +664,7 @@ impl Parser {
             if template.num_values > 0 {
                 let optional = match template.optional_vals {
                     true => " optional ",
-                    false => " "
+                    false => " ",
                 };
                 write!(matches, " [{}{optional}values]", template.num_values).unwrap();
             }
@@ -663,6 +711,7 @@ impl Parser {
         }
 
         let mut hm = HashMap::new();
+        let mut idhm = HashMap::new();
 
         let mut context = 0;
 
@@ -710,7 +759,9 @@ impl Parser {
                         action.borrow_mut()(values.clone());
                     }
 
-                    hm.insert(query, ParsedArgument::new(template.id, values));
+                    let pa = ParsedArgument::new(template.id, values);
+                    hm.insert(query, pa.clone());
+                    idhm.insert(template.id, pa);
                 }
             } else if let Some(template) = self.stored.get(&query2) {
                 context = template.id;
@@ -748,7 +799,9 @@ impl Parser {
                     action.borrow_mut()(values.clone());
                 }
 
-                hm.insert(query2, ParsedArgument::new(template.id, values));
+                let pa = ParsedArgument::new(template.id, values);
+                hm.insert(query2, pa.clone());
+                idhm.insert(template.id, pa);
             } else if let Some(template) = self.stored.values().find(|t| t.matches.contains(arg)) {
                 if let Some(parent) = template.subargument_of {
                     let parent = self.stored.values().find(|t| t.id == parent).unwrap();
@@ -761,7 +814,7 @@ impl Parser {
             }
         }
 
-        Ok(ParsedArguments { hm })
+        Ok(ParsedArguments { hm, ids: idhm })
     }
 }
 
@@ -799,7 +852,6 @@ mod tests {
         let _inf = parser.add_subcommand(sub_sub_sub, "-i", 0, "Infinite nesting!");
 
         parser.parse(Some(vec!["--help"])).unwrap();
-        assert!(true);
     }
 
     #[test]
@@ -893,6 +945,8 @@ mod tests {
         let result = parser.parse(Some(vec!["--string"]));
 
         assert!(result.is_err());
+
+        println!("{}", result.err().unwrap())
     }
 
     #[test]
@@ -915,8 +969,6 @@ mod tests {
                 .optional_values(true),
         );
 
-        parser
-            .parse(Some(vec!["say", "hello", "world"]))
-            .expect("bad");
+        assert!(parser.parse(Some(vec!["say", "hello", "world"])).is_ok())
     }
 }
