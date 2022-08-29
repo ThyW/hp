@@ -9,7 +9,7 @@ pub enum HpError {
 impl Display for HpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NumberOfValues(arg, got, expected) => write!(f, "ERROR: In `{arg}`, expected {expected} number of values, received {got}."),
+            Self::NumberOfValues(arg, got, expected) => write!(f, "ERROR: In argument `{arg}`, expected {expected} value/s, received {got}."),
             Self::OutOfContext(arg, parent) => write!(f, "ERROR: Out of context arugment, because '{arg}' is a subcommand of '{parent}' and '{parent}' is not present in the command."),
         }
     }

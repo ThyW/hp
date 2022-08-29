@@ -1,7 +1,8 @@
 //! `hp` is a high performance command line argument parsing library. It's implementation is based
 //! on **HashMaps**, so parsing should be done in `O(1)` time complexity.
 //!
-//! ```no_run
+//! ```
+//! extern crate hp;;
 //! use hp::{Parser, Template};
 //!
 //! fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,7 +45,7 @@
 //!     // $ myprog -c --add 2 2
 //!     // 4
 //!
-//!     let presult = parser.parse();
+//!     let presult = parser.parse()?;
 //!
 //!     if let Some(err) = presult.err() {
 //!         println!("{err}");
@@ -58,20 +59,25 @@
 //!     }
 //! }
 //! ```
-//! Hello world.
+//! TODO: MORE DOCS.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::env::{self, current_exe};
 use std::fmt::Write;
 use std::process::exit;
+use std::rc::Rc;
 
 use errors::HpError;
 
 pub mod errors;
 
+type Action = Rc<RefCell<dyn FnMut(Vec<String>)>>;
+pub type TemplateId = usize;
+
 #[derive(Clone, Debug)]
 pub struct ParsedArgument {
-    id: usize,
+    id: TemplateId,
     values: Vec<String>,
 }
 
@@ -85,8 +91,8 @@ impl ParsedArgument {
         &self.values
     }
 
-    /// Return the ID of this parsed argument.
-    pub fn id(&self) -> usize {
+    /// Return the unique identifier of this parsed argument.
+    pub fn id(&self) -> TemplateId {
         self.id
     }
 
@@ -125,7 +131,7 @@ impl ParsedArguments {
     ///
     /// result.get_with_id(id).is_some().then(|| println!("--some-other-arg in arguments!))
     /// ```
-    pub fn get_with_id(&self, id: usize) -> Option<&ParsedArgument> {
+    pub fn get_with_id(&self, id: TemplateId) -> Option<&ParsedArgument> {
         self.hm.values().find(|v| v.id == id)
     }
 
@@ -155,7 +161,7 @@ impl ParsedArguments {
     ///
     /// result.has(world).then(|| println!("World!"))
     /// ```
-    pub fn has_with_id(&self, id: usize) -> bool {
+    pub fn has_with_id(&self, id: TemplateId) -> bool {
         self.get_with_id(id).is_some()
     }
 
@@ -200,15 +206,15 @@ impl ParsedArguments {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Default, Clone)]
 pub struct Template {
     matches: Vec<String>,
     num_values: usize,
     optional_vals: bool,
     help: String,
     subargument_of: Option<usize>,
-    id: usize,
-    action: Option<fn(Vec<String>) -> ()>,
+    id: TemplateId,
+    action: Option<Action>,
 }
 
 impl Template {
@@ -277,7 +283,7 @@ impl Template {
     /// parser.add_template(Template::new()
     ///                         .matches("--say")
     ///                         .number_of_values(1)
-    ///                         .values_are_optional(true));
+    ///                         .optional_values(true));
     ///
     /// let ret = parser.parse()?;
     /// if let Ok(vals) = ret.get("--say") {
@@ -293,7 +299,7 @@ impl Template {
     /// // hello
     /// // $ myprog --say # nothing happens
     /// ```
-    pub fn values_are_optional(mut self, ov: bool) -> Self {
+    pub fn optional_values(mut self, ov: bool) -> Self {
         self.optional_vals = ov;
         self
     }
@@ -305,7 +311,7 @@ impl Template {
     /// parser.add_template(Template::new()
     ///                         .matches("--say")
     ///                         .number_of_values(1)
-    ///                         .values_are_optional(true)
+    ///                         .optional_values(true)
     ///                         .with_help("Print a given argument."));
     ///
     /// // ...
@@ -343,8 +349,8 @@ impl Template {
     ///    }));
     ///
     /// ```
-    pub fn on_parse(mut self, action: fn(Vec<String>) -> ()) -> Self {
-        self.action = Some(action);
+    pub fn on_parse<F: FnMut(Vec<String>) + 'static>(mut self, action: F) -> Self {
+        self.action = Some(Rc::new(RefCell::new(action)));
         self
     }
 
@@ -357,7 +363,7 @@ impl Template {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Clone)]
 /// Command line argument parser.
 ///
 /// ```no_run
@@ -376,6 +382,7 @@ pub struct Parser {
     description: String,
     usage: String,
     program_name: String,
+    help: Option<String>,
 }
 
 impl Parser {
@@ -400,6 +407,7 @@ impl Parser {
             description: "".to_string(),
             usage: "".to_string(),
             program_name: exe_name,
+            help: None,
         }
     }
 
@@ -417,7 +425,6 @@ impl Parser {
     }
 
     /// Specifies the description of the program, will be used when printing the help message.
-    ///
     pub fn with_description<S: AsRef<str>>(mut self, v: S) -> Self {
         self.description = v.as_ref().to_string();
         self
@@ -440,15 +447,23 @@ impl Parser {
         self
     }
 
+    /// Set a completely custom help string, which will be used when printing the `--help`
+    /// command's string.
+    pub fn set_help<S: AsRef<str>>(mut self, v: S) -> Self {
+        self.help = Some(v.as_ref().to_string());
+        self
+    }
+
     fn generate_id(&mut self) -> usize {
         self.last_id += 1;
         self.last_id
     }
 
-    fn add_to_map(&mut self, mut template: Template) -> usize {
+    fn add_to_map(&mut self, mut template: Template) -> TemplateId {
         let template_id = self.generate_id();
         template.set_id(template_id);
-        for name in template.clone().matches.iter() {
+        let matches = template.matches.clone();
+        for name in matches.iter() {
             let subarg = template.subargument_of.unwrap_or(0);
             let new_name = format!("{}#{}", subarg, name.clone());
             let _ = self.stored.insert(new_name.clone(), template.clone());
@@ -461,7 +476,12 @@ impl Parser {
     /// Add a new `Template` to the parser. Return the ID of the `Template`.
     ///
     /// This method creates the `Template` for you, but it takes away some of the options.
-    pub fn add<S: AsRef<str>>(&mut self, matches: S, num_values: usize, help_message: S) -> usize {
+    pub fn add<S: AsRef<str>>(
+        &mut self,
+        matches: S,
+        num_values: usize,
+        help_message: S,
+    ) -> TemplateId {
         let template = Template::new()
             .matches(matches)
             .number_of_values(num_values)
@@ -472,7 +492,7 @@ impl Parser {
     /// A a new `Template` to the parser. Return the ID of the `Template`.
     ///
     /// Given a template, add it to the parser.
-    pub fn add_template(&mut self, template: Template) -> usize {
+    pub fn add_template(&mut self, template: Template) -> TemplateId {
         self.add_to_map(template)
     }
 
@@ -486,7 +506,7 @@ impl Parser {
         matches: S,
         num_values: usize,
         help_message: S,
-    ) -> usize {
+    ) -> TemplateId {
         let id = self.generate_id();
         let mut template = Template::new()
             .matches(matches.as_ref())
@@ -504,7 +524,7 @@ impl Parser {
         &mut self,
         subargument_of: usize,
         mut template: Template,
-    ) -> usize {
+    ) -> TemplateId {
         let id = self.generate_id();
         template.set_id(id);
         template.subarg(subargument_of);
@@ -539,7 +559,18 @@ impl Parser {
             .stored
             .values()
             .into_iter()
-            .map(|t| t.matches.join(", ").len())
+            .map(|t| {
+                let mut temp = t.matches.join(" | ");
+                if t.num_values > 0 {
+                    let optional = match t.optional_vals {
+                        true => " optional ",
+                        false => " "
+                    };
+                    write!(temp, " [{}{optional}values]", t.num_values).unwrap();
+                }
+
+                temp.len()
+            })
             .max();
         let longest_value_len = match longest_value_len {
             Some(l) => l + 4,
@@ -554,12 +585,11 @@ impl Parser {
             let each = self
                 .stored
                 .values()
-                .find(|temp| temp.matches.contains(&name))
+                .find(|temp| temp.matches.contains(name))
                 .unwrap();
-            if template_vec
+            if !template_vec
                 .iter()
-                .find(|(template, _)| template.id == each.id)
-                .is_none()
+                .any(|(template, _)| template.id == each.id)
             {
                 if let Some(sub_arg_of) = each.subargument_of {
                     if let Some((index, (_, level))) = template_vec
@@ -570,7 +600,7 @@ impl Parser {
                         if level + 1 > max_level {
                             max_level = level + 1;
                         }
-                        template_vec.insert(index + 1, (&each, level + 1));
+                        template_vec.insert(index + 1, (each, level + 1));
                     }
                 } else {
                     template_vec.push((each, 0))
@@ -582,12 +612,20 @@ impl Parser {
             let mut lvl = String::new();
             (0..(level * 4)).for_each(|_| lvl.push(' '));
 
-            let mut matches = template.matches.join(", ");
+            let mut matches = template.matches.join(" | ");
+            if template.num_values > 0 {
+                let optional = match template.optional_vals {
+                    true => " optional ",
+                    false => " "
+                };
+                write!(matches, " [{}{optional}values]", template.num_values).unwrap();
+            }
+
             while matches.len() != longest_value_len + (max_level * 4) - lvl.len() {
                 matches.push(' ');
             }
 
-            writeln!(result_string, "    {lvl}{matches}{}", template.help).unwrap_or(());
+            writeln!(result_string, "    {lvl}{matches} {}", template.help).unwrap_or(());
         }
 
         let mut help = String::from("-h, --help");
@@ -595,15 +633,19 @@ impl Parser {
             help.push(' ');
         }
 
-        writeln!(result_string, "    {help}Print this help message!").unwrap_or(());
+        write!(result_string, "    {help} Print this help message!").unwrap_or(());
 
         result_string
     }
 
     fn help_and_exit(&self) {
-        let help_string = self.create_help();
+        if let Some(help) = &self.help {
+            println!("{help}");
+        } else {
+            let help_string = self.create_help();
 
-        println!("{help_string}");
+            println!("{help_string}");
+        }
 
         if self.exit_on_help {
             exit(0);
@@ -612,16 +654,10 @@ impl Parser {
 
     /// Parse the command line arguments, or a list of strings, if provided, and return a
     /// `ParsedArguments` structure.
-    pub fn parse(
-        &mut self,
-        from: Option<Vec<impl AsRef<str>>>,
-    ) -> Result<ParsedArguments, HpError> {
+    pub fn parse(&mut self, from: Option<Vec<&str>>) -> Result<ParsedArguments, HpError> {
         let args: Vec<String>;
         if let Some(from_vec) = from {
-            args = from_vec
-                .iter()
-                .map(|each| each.as_ref().to_string())
-                .collect();
+            args = from_vec.iter().map(|each| each.to_string()).collect();
         } else {
             args = env::args().collect();
         }
@@ -671,7 +707,7 @@ impl Parser {
                     }
 
                     if let Some(action) = &template.action {
-                        action(values.clone());
+                        action.borrow_mut()(values.clone());
                     }
 
                     hm.insert(query, ParsedArgument::new(template.id, values));
@@ -684,6 +720,9 @@ impl Parser {
 
                 while i < index + template.num_values {
                     i += 1;
+                    if i == args.len() {
+                        break;
+                    }
                     let value = &args[i];
 
                     let q1 = format!("{context}#{value}");
@@ -706,20 +745,18 @@ impl Parser {
                 }
 
                 if let Some(action) = &template.action {
-                    action(values.clone());
+                    action.borrow_mut()(values.clone());
                 }
 
                 hm.insert(query2, ParsedArgument::new(template.id, values));
-            } else {
-                if let Some(template) = self.stored.values().find(|t| t.matches.contains(&arg)) {
-                    if let Some(parent) = template.subargument_of {
-                        let parent = self.stored.values().find(|t| t.id == parent).unwrap();
-                        let parent_match = &parent.matches[0];
-                        return Err(HpError::OutOfContext(
-                            arg.to_string(),
-                            parent_match.to_string(),
-                        ));
-                    }
+            } else if let Some(template) = self.stored.values().find(|t| t.matches.contains(arg)) {
+                if let Some(parent) = template.subargument_of {
+                    let parent = self.stored.values().find(|t| t.id == parent).unwrap();
+                    let parent_match = &parent.matches[0];
+                    return Err(HpError::OutOfContext(
+                        arg.to_string(),
+                        parent_match.to_string(),
+                    ));
                 }
             }
         }
@@ -744,7 +781,7 @@ mod tests {
             Template::new()
                 .matches("-x")
                 .matches("--expand")
-                .values_are_optional(false)
+                .optional_values(false)
                 .number_of_values(0)
                 .with_help("Expand something."),
         );
@@ -801,9 +838,9 @@ mod tests {
             Template::new()
                 .matches("-x")
                 .matches("--expand")
-                .values_are_optional(false)
+                .optional_values(false)
                 .number_of_values(0)
-                .with_help("Expand something.")
+                .with_help("Expand something."),
         );
 
         let sub_sub = parser.add_subcommand_template(
@@ -829,7 +866,7 @@ mod tests {
 
     #[test]
     fn out_of_context() {
-        let mut parser = Parser::new()
+        let mut parser: Parser = Parser::new()
             .with_usage("")
             .with_author("me")
             .with_description("Example program")
@@ -840,7 +877,7 @@ mod tests {
             Template::new()
                 .matches("-x")
                 .matches("--expand")
-                .values_are_optional(false)
+                .optional_values(false)
                 .number_of_values(0)
                 .with_help("Expand something."),
         );
@@ -850,7 +887,7 @@ mod tests {
             Template::new()
                 .matches("--string")
                 .number_of_values(0)
-                .with_help("Expands a string")
+                .with_help("Expands a string"),
         );
 
         let result = parser.parse(Some(vec!["--string"]));
@@ -861,18 +898,21 @@ mod tests {
     #[test]
     fn action() {
         let mut parser = Parser::new();
+        let mut last_val = String::new();
 
         parser.add_template(
             Template::new()
                 .matches("say")
-                .on_parse(|values| {
+                .on_parse(move |values| {
                     println!("Saying: ");
-                    for each in values {
-                        println!("{each}")
+                    for each in values.iter() {
+                        last_val = each.to_string().clone();
                     }
+
+                    println!("Last val {last_val}");
                 })
                 .number_of_values(8)
-                .values_are_optional(true),
+                .optional_values(true),
         );
 
         parser
